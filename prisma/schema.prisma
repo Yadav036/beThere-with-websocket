@@ -1,0 +1,82 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar
+  email     String   @unique
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  createdEvents   Event[]           @relation("EventCreator")
+  participants    EventParticipant[]
+  sentInvites     EventInvite[]     @relation("InviteSender")
+  receivedInvites EventInvite[]     @relation("InviteReceiver")
+
+  @@map("users")
+}
+
+model Event {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar
+  name                 String
+  description          String?
+  location             String
+  locationLat          Float?   @map("location_lat") @db.Real
+  locationLng          Float?   @map("location_lng") @db.Real
+  datetime             DateTime
+  creatorId            String   @map("creator_id") @db.VarChar
+  allowLocationSharing Boolean  @default(true) @map("allow_location_sharing")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  // Relations
+  creator      User                @relation("EventCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  participants EventParticipant[]
+  invites      EventInvite[]
+
+  @@map("events")
+}
+
+model EventParticipant {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar
+  eventId          String    @map("event_id") @db.VarChar
+  userId           String    @map("user_id") @db.VarChar
+  lastLat          Float?    @map("last_lat") @db.Real
+  lastLng          Float?    @map("last_lng") @db.Real
+  lastLocationAt   DateTime? @map("last_location_at")
+  isMoving         Boolean   @default(false) @map("is_moving")
+  estimatedArrival DateTime? @map("estimated_arrival")
+  distanceToEvent  Float?    @map("distance_to_event") @db.Real
+  joinedAt         DateTime  @default(now()) @map("joined_at")
+
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("event_participants")
+}
+
+model EventInvite {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.VarChar
+  eventId   String   @map("event_id") @db.VarChar
+  inviterId String   @map("inviter_id") @db.VarChar
+  inviteeId String   @map("invitee_id") @db.VarChar
+  status    String   @default("pending") // pending, accepted, declined
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  inviter User  @relation("InviteSender", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User  @relation("InviteReceiver", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@map("event_invites")
+}

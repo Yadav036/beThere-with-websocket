@@ -1,0 +1,555 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BeThere - Real-time Event Coordination</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    borderRadius: {
+                        lg: "var(--radius)",
+                        md: "calc(var(--radius) - 2px)",
+                        sm: "calc(var(--radius) - 4px)",
+                    },
+                    colors: {
+                        background: "var(--background)",
+                        foreground: "var(--foreground)",
+                        card: {
+                            DEFAULT: "var(--card)",
+                            foreground: "var(--card-foreground)",
+                        },
+                        popover: {
+                            DEFAULT: "var(--popover)",
+                            foreground: "var(--popover-foreground)",
+                        },
+                        primary: {
+                            DEFAULT: "var(--primary)",
+                            foreground: "var(--primary-foreground)",
+                        },
+                        secondary: {
+                            DEFAULT: "var(--secondary)",
+                            foreground: "var(--secondary-foreground)",
+                        },
+                        muted: {
+                            DEFAULT: "var(--muted)",
+                            foreground: "var(--muted-foreground)",
+                        },
+                        accent: {
+                            DEFAULT: "var(--accent)",
+                            foreground: "var(--accent-foreground)",
+                        },
+                        destructive: {
+                            DEFAULT: "var(--destructive)",
+                            foreground: "var(--destructive-foreground)",
+                        },
+                        border: "var(--border)",
+                        input: "var(--input)",
+                        ring: "var(--ring)",
+                        chart: {
+                            "1": "var(--chart-1)",
+                            "2": "var(--chart-2)",
+                            "3": "var(--chart-3)",
+                            "4": "var(--chart-4)",
+                            "5": "var(--chart-5)",
+                        }
+                    },
+                    fontFamily: {
+                        sans: ["var(--font-sans)"],
+                        serif: ["var(--font-serif)"],
+                        mono: ["var(--font-mono)"],
+                    },
+                    animation: {
+                        'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'bounce-slow': 'bounce 2s infinite',
+                    }
+                },
+            }
+        };
+    </script>
+    <style>
+        :root {
+            --background: hsl(0 0% 98%);
+            --foreground: hsl(0 0% 10%);
+            --card: hsl(0 0% 100%);
+            --card-foreground: hsl(0 0% 10%);
+            --popover: hsl(0 0% 100%);
+            --popover-foreground: hsl(0 0% 10%);
+            --primary: hsl(51 100% 50%);
+            --primary-foreground: hsl(0 0% 0%);
+            --secondary: hsl(0 0% 96%);
+            --secondary-foreground: hsl(0 0% 10%);
+            --muted: hsl(0 0% 96%);
+            --muted-foreground: hsl(0 0% 45%);
+            --accent: hsl(39 100% 50%);
+            --accent-foreground: hsl(0 0% 0%);
+            --destructive: hsl(0 100% 50%);
+            --destructive-foreground: hsl(0 0% 98%);
+            --border: hsl(0 0% 0%);
+            --input: hsl(0 0% 100%);
+            --ring: hsl(51 100% 50%);
+            --radius: 0.5rem;
+            --font-sans: 'Arial Black', Arial, sans-serif;
+            --font-serif: 'Times New Roman', serif;
+            --font-mono: 'Courier New', monospace;
+        }
+
+        .retro-border {
+            border: 4px solid black;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.8);
+        }
+
+        .snap-header {
+            background: linear-gradient(45deg, #FFD700, #FFA500);
+            border: 4px solid black;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .connection-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .connected {
+            background-color: #00FF00;
+            animation: pulse 2s infinite;
+        }
+
+        .disconnected {
+            background-color: #FF0000;
+        }
+
+        .reconnecting {
+            background-color: #FFA500;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .live-update {
+            animation: bounce 0.5s;
+        }
+
+        .participant-dot {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid black;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .moving {
+            background-color: #00FF00;
+            animation: pulse-fast 1s infinite;
+        }
+
+        .stationary {
+            background-color: #FFD700;
+        }
+
+        .far {
+            background-color: #FF4500;
+        }
+    </style>
+</head>
+<body class="bg-background text-foreground font-sans">
+    <!-- @COMPONENT: Header -->
+    <header class="snap-header p-6 text-black">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <div class="text-3xl font-black">📸 SNAP EVENTS</div>
+                <!-- WebSocket Connection Status -->
+                <div class="flex items-center bg-black text-white px-3 py-1 text-sm font-bold">
+                    <span class="connection-indicator connected" data-status="connected"></span>
+                    <span data-connection-text="LIVE">LIVE</span>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <button class="bg-black text-white px-4 py-2 font-bold retro-border hover:bg-gray-800 transition-colors">
+                    CREATE EVENT
+                </button>
+                <div class="bg-white px-3 py-2 retro-border font-bold">
+                    👤 John Doe
+                </div>
+            </div>
+        </div>
+    </header>
+    <!-- @END_COMPONENT: Header -->
+
+    <main class="max-w-6xl mx-auto p-6 space-y-8">
+        <!-- @COMPONENT: EventsList -->
+        <section class="space-y-6">
+            <h1 class="text-4xl font-black text-black uppercase tracking-wider">Your Events</h1>
+            
+            <!-- Active Event Card -->
+            <div class="bg-card retro-border p-6 space-y-4 live-update" data-event-id="event-123">
+                <div class="flex items-start justify-between">
+                    <div class="space-y-2">
+                        <div class="flex items-center space-x-3">
+                            <h2 class="text-2xl font-black text-black">🎉 Sarah's Birthday Party</h2>
+                            <div class="bg-green-500 text-black px-2 py-1 text-sm font-bold retro-border">
+                                ACTIVE
+                            </div>
+                            <!-- Real-time participant count -->
+                            <div class="bg-primary text-black px-2 py-1 text-sm font-bold" data-live-count="5">
+                                👥 5 LIVE
+                            </div>
+                        </div>
+                        <p class="text-lg font-bold">📍 Central Park, NYC</p>
+                        <p class="text-base font-semibold">⏰ Today, 7:00 PM</p>
+                    </div>
+                    <div class="flex space-x-2">
+                        <!-- Native Share Button -->
+                        <button class="bg-primary text-black px-4 py-2 font-bold retro-border hover:bg-yellow-400 transition-colors" data-share-event="event-123">
+                            📤 SHARE
+                        </button>
+                        <!-- Delete Button (Creator Only) -->
+                        <button class="bg-destructive text-white px-4 py-2 font-bold retro-border hover:bg-red-600 transition-colors" data-delete-event="event-123">
+                            🗑️ DELETE
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Live Participants Section -->
+                <div class="border-t-4 border-black pt-4">
+                    <h3 class="text-xl font-black text-black mb-4 uppercase">Live Participants</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- @MAP: participants.map(participant => ( -->
+                        <div class="bg-secondary retro-border p-4 space-y-2" data-participant-id="user-456">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="participant-dot moving" data-movement-status="moving"></div>
+                                    <span class="font-bold">Alex Chen</span>
+                                </div>
+                                <div class="bg-green-500 text-black px-2 py-1 text-xs font-bold">
+                                    MOVING
+                                </div>
+                            </div>
+                            <div class="space-y-1 text-sm font-mono">
+                                <div data-bind="participant.location">📍 0.8 mi away</div>
+                                <div data-bind="participant.eta" class="text-green-600 font-bold">⏱️ ETA: 12 min</div>
+                                <div data-bind="participant.lastSeen" class="text-muted-foreground">Updated 2s ago</div>
+                            </div>
+                        </div>
+
+                        <div class="bg-secondary retro-border p-4 space-y-2" data-participant-id="user-789">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="participant-dot stationary" data-movement-status="stationary"></div>
+                                    <span class="font-bold">Maria Rodriguez</span>
+                                </div>
+                                <div class="bg-primary text-black px-2 py-1 text-xs font-bold">
+                                    STOPPED
+                                </div>
+                            </div>
+                            <div class="space-y-1 text-sm font-mono">
+                                <div data-bind="participant.location">📍 2.1 mi away</div>
+                                <div data-bind="participant.eta" class="text-orange-600 font-bold">⏱️ ETA: 28 min</div>
+                                <div data-bind="participant.lastSeen" class="text-muted-foreground">Updated 1s ago</div>
+                            </div>
+                        </div>
+
+                        <div class="bg-secondary retro-border p-4 space-y-2" data-participant-id="user-101">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="participant-dot far" data-movement-status="moving"></div>
+                                    <span class="font-bold">David Kim</span>
+                                </div>
+                                <div class="bg-orange-500 text-black px-2 py-1 text-xs font-bold">
+                                    FAR
+                                </div>
+                            </div>
+                            <div class="space-y-1 text-sm font-mono">
+                                <div data-bind="participant.location">📍 15.6 mi away</div>
+                                <div data-bind="participant.eta" class="text-red-600 font-bold">⏱️ ETA: 45 min</div>
+                                <div data-bind="participant.lastSeen" class="text-muted-foreground">Updated 3s ago</div>
+                            </div>
+                        </div>
+                        <!-- @END_MAP )) -->
+                    </div>
+                </div>
+
+                <!-- Real-time Location Sharing Status -->
+                <div class="border-t-4 border-black pt-4">
+                    <div class="flex items-center justify-between bg-muted p-4 retro-border">
+                        <div class="flex items-center space-x-3">
+                            <div class="connection-indicator connected"></div>
+                            <span class="font-bold">Your location is being shared</span>
+                        </div>
+                        <button class="bg-destructive text-white px-4 py-2 font-bold retro-border hover:bg-red-600 transition-colors" data-stop-sharing="true">
+                            STOP SHARING
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upcoming Event Card -->
+            <div class="bg-card retro-border p-6 space-y-4" data-event-id="event-456">
+                <div class="flex items-start justify-between">
+                    <div class="space-y-2">
+                        <div class="flex items-center space-x-3">
+                            <h2 class="text-2xl font-black text-black">🍕 Team Lunch</h2>
+                            <div class="bg-muted text-black px-2 py-1 text-sm font-bold retro-border">
+                                UPCOMING
+                            </div>
+                        </div>
+                        <p class="text-lg font-bold">📍 Joe's Pizza, Manhattan</p>
+                        <p class="text-base font-semibold">⏰ Tomorrow, 12:30 PM</p>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button class="bg-primary text-black px-4 py-2 font-bold retro-border hover:bg-yellow-400 transition-colors" data-share-event="event-456">
+                            📤 SHARE
+                        </button>
+                        <button class="bg-secondary text-black px-4 py-2 font-bold retro-border hover:bg-gray-300 transition-colors">
+                            📝 EDIT
+                        </button>
+                    </div>
+                </div>
+
+                <div class="border-t-4 border-black pt-4">
+                    <h3 class="text-xl font-black text-black mb-4 uppercase">Participants (3)</h3>
+                    <div class="flex space-x-4">
+                        <div class="flex items-center bg-secondary px-3 py-2 retro-border">
+                            <span class="font-bold">👤 You (Host)</span>
+                        </div>
+                        <div class="flex items-center bg-secondary px-3 py-2 retro-border">
+                            <span class="font-bold">👤 Jennifer Liu</span>
+                        </div>
+                        <div class="flex items-center bg-secondary px-3 py-2 retro-border">
+                            <span class="font-bold">👤 Mike Johnson</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- @END_COMPONENT: EventsList -->
+
+        <!-- @COMPONENT: CreateEventForm -->
+        <section class="bg-card retro-border p-6 space-y-6">
+            <h2 class="text-3xl font-black text-black uppercase">Create New Event</h2>
+            <form class="space-y-4" data-form="create-event">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <label class="text-lg font-bold text-black">EVENT NAME</label>
+                        <input type="text" placeholder="Enter event name..." class="w-full p-3 border-4 border-black font-bold text-lg focus:ring-4 focus:ring-primary" data-field="name">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-lg font-bold text-black">LOCATION</label>
+                        <input type="text" placeholder="Search places..." class="w-full p-3 border-4 border-black font-bold text-lg focus:ring-4 focus:ring-primary" data-field="location">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <label class="text-lg font-bold text-black">DATE</label>
+                        <input type="date" class="w-full p-3 border-4 border-black font-bold text-lg focus:ring-4 focus:ring-primary" data-field="date">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-lg font-bold text-black">TIME</label>
+                        <input type="time" class="w-full p-3 border-4 border-black font-bold text-lg focus:ring-4 focus:ring-primary" data-field="time">
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    <label class="flex items-center space-x-3">
+                        <input type="checkbox" class="w-6 h-6 border-4 border-black focus:ring-4 focus:ring-primary" data-field="allowLocationSharing" checked>
+                        <span class="text-lg font-bold text-black">ALLOW REAL-TIME LOCATION SHARING</span>
+                    </label>
+                    <p class="text-sm text-muted-foreground font-semibold">Participants can share their live location and see ETAs</p>
+                </div>
+                <button type="submit" class="w-full bg-primary text-black p-4 text-xl font-black retro-border hover:bg-yellow-400 transition-colors uppercase tracking-wider" data-submit="create-event">
+                    📸 SNAP CREATE EVENT
+                </button>
+            </form>
+        </section>
+        <!-- @END_COMPONENT: CreateEventForm -->
+
+        <!-- @COMPONENT: WebSocketStatus -->
+        <section class="bg-card retro-border p-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <span class="text-lg font-bold text-black">CONNECTION STATUS:</span>
+                    <div class="flex items-center">
+                        <span class="connection-indicator connected" data-ws-status="connected"></span>
+                        <span class="font-bold text-green-600" data-ws-text="CONNECTED">CONNECTED</span>
+                    </div>
+                    <div class="text-sm text-muted-foreground font-mono" data-ws-info="Last ping: 1s ago">
+                        Last ping: 1s ago
+                    </div>
+                </div>
+                <div class="flex space-x-2">
+                    <button class="bg-secondary text-black px-3 py-1 text-sm font-bold retro-border" data-ws-reconnect="true">
+                        🔄 RECONNECT
+                    </button>
+                    <button class="bg-muted text-black px-3 py-1 text-sm font-bold retro-border" data-ws-disconnect="true">
+                        ⏸️ DISCONNECT
+                    </button>
+                </div>
+            </div>
+        </section>
+        <!-- @END_COMPONENT: WebSocketStatus -->
+    </main>
+
+    <!-- @COMPONENT: ToastNotifications -->
+    <div class="fixed bottom-6 right-6 space-y-3" data-toast-container="true">
+        <!-- Real-time notification example -->
+        <div class="bg-green-500 text-black p-4 retro-border font-bold max-w-sm live-update" data-toast="location-update">
+            📍 Alex is now 0.5 mi closer! ETA: 8 min
+        </div>
+        <div class="bg-primary text-black p-4 retro-border font-bold max-w-sm live-update" data-toast="participant-joined">
+            👋 Sarah joined the event!
+        </div>
+    </div>
+    <!-- @END_COMPONENT: ToastNotifications -->
+
+    <!-- Share Modal -->
+    <!-- @COMPONENT: ShareModal -->
+    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden" data-modal="share">
+        <div class="bg-card retro-border p-6 max-w-md w-full mx-4 space-y-4">
+            <h3 class="text-2xl font-black text-black uppercase">Share Event</h3>
+            <div class="space-y-3">
+                <button class="w-full bg-primary text-black p-3 font-bold retro-border hover:bg-yellow-400 transition-colors" data-native-share="true">
+                    📱 SHARE VIA DEVICE
+                </button>
+                <button class="w-full bg-secondary text-black p-3 font-bold retro-border hover:bg-gray-300 transition-colors" data-copy-link="true">
+                    📋 COPY LINK
+                </button>
+                <div class="bg-muted p-3 retro-border">
+                    <p class="text-sm font-bold text-black">INVITE LINK:</p>
+                    <p class="text-xs font-mono break-all" data-event-link="https://be-there.app/join/event-123">
+                        https://be-there.app/join/event-123
+                    </p>
+                </div>
+            </div>
+            <button class="w-full bg-destructive text-white p-3 font-bold retro-border hover:bg-red-600 transition-colors" data-close-modal="share">
+                ❌ CLOSE
+            </button>
+        </div>
+    </div>
+    <!-- @END_COMPONENT: ShareModal -->
+
+    <script>
+        (function() {
+            // TODO: Implement WebSocket connection management
+            // TODO: Implement real-time location broadcasting
+            // TODO: Implement live participant updates
+            // TODO: Implement real-time ETA calculations
+            // TODO: Implement native device sharing
+            // TODO: Implement event deletion with creator permissions
+            // TODO: Implement movement detection with Haversine distance
+
+            // Simulated WebSocket connection status updates
+            let connectionStatus = 'connected';
+            const statusIndicators = document.querySelectorAll('[data-ws-status]');
+            const statusTexts = document.querySelectorAll('[data-ws-text]');
+            
+            function updateConnectionStatus(status) {
+                connectionStatus = status;
+                statusIndicators.forEach(indicator => {
+                    indicator.className = `connection-indicator ${status}`;
+                });
+                
+                const statusText = status === 'connected' ? 'CONNECTED' : 
+                                 status === 'reconnecting' ? 'RECONNECTING' : 'DISCONNECTED';
+                statusTexts.forEach(text => {
+                    text.textContent = statusText;
+                    text.className = status === 'connected' ? 'font-bold text-green-600' :
+                                   status === 'reconnecting' ? 'font-bold text-orange-600' : 'font-bold text-red-600';
+                });
+            }
+
+            // Simulated real-time updates
+            function simulateRealTimeUpdates() {
+                const participants = document.querySelectorAll('[data-participant-id]');
+                participants.forEach(participant => {
+                    // Simulate location and ETA updates
+                    const etaElement = participant.querySelector('[data-bind="participant.eta"]');
+                    const lastSeenElement = participant.querySelector('[data-bind="participant.lastSeen"]');
+                    
+                    if (etaElement && lastSeenElement) {
+                        // Add live-update animation
+                        participant.classList.add('live-update');
+                        setTimeout(() => participant.classList.remove('live-update'), 500);
+                        
+                        // Update last seen timestamp
+                        lastSeenElement.textContent = 'Updated just now';
+                    }
+                });
+            }
+
+            // Native share functionality
+            document.addEventListener('click', async function(e) {
+                if (e.target.matches('[data-share-event]')) {
+                    const eventId = e.target.getAttribute('data-share-event');
+                    const shareData = {
+                        title: 'Join my event on BeThere!',
+                        text: 'I\'ve invited you to Sarah\'s Birthday Party',
+                        url: `https://be-there.app/join/${eventId}`
+                    };
+
+                    if (navigator.share && navigator.canShare(shareData)) {
+                        try {
+                            await navigator.share(shareData);
+                        } catch (err) {
+                            console.log('Share canceled or failed');
+                        }
+                    } else {
+                        // Fallback to modal
+                        document.querySelector('[data-modal="share"]').classList.remove('hidden');
+                    }
+                }
+
+                if (e.target.matches('[data-copy-link]')) {
+                    const link = document.querySelector('[data-event-link]').textContent;
+                    navigator.clipboard.writeText(link);
+                    // Show toast notification
+                    showToast('📋 Link copied to clipboard!', 'success');
+                }
+
+                if (e.target.matches('[data-close-modal]')) {
+                    const modalType = e.target.getAttribute('data-close-modal');
+                    document.querySelector(`[data-modal="${modalType}"]`).classList.add('hidden');
+                }
+
+                if (e.target.matches('[data-delete-event]')) {
+                    if (confirm('Are you sure you want to delete this event? This action cannot be undone.')) {
+                        // TODO: Implement delete event API call
+                        showToast('🗑️ Event deleted successfully', 'success');
+                    }
+                }
+            });
+
+            function showToast(message, type = 'info') {
+                const toastContainer = document.querySelector('[data-toast-container]');
+                const toast = document.createElement('div');
+                toast.className = `bg-${type === 'success' ? 'green-500' : 'primary'} text-black p-4 retro-border font-bold max-w-sm live-update`;
+                toast.textContent = message;
+                
+                toastContainer.appendChild(toast);
+                
+                setTimeout(() => {
+                    toast.remove();
+                }, 3000);
+            }
+
+            // Simulate periodic real-time updates
+            setInterval(simulateRealTimeUpdates, 5000);
+
+            // Simulate connection status changes (for demo)
+            setTimeout(() => {
+                updateConnectionStatus('reconnecting');
+                setTimeout(() => updateConnectionStatus('connected'), 2000);
+            }, 10000);
+
+        })();
+    </script>
+</body>
+</html>

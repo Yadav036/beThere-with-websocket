@@ -1,0 +1,223 @@
+@import url('https://fonts.googleapis.com/css2?family=Architects+Daughter&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Fira+Code:wght@300..700&family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&family=IBM+Plex+Sans:ital,wght@0,100..700;1,100..700&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=Outfit:wght@100..900&family=Oxanium:wght@200..800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Roboto:ital,wght@0,100..900;1,100..900&family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&family=Space+Grotesk:wght@300..700&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(0, 0%, 98%);
+  --foreground: hsl(0, 0%, 10%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(0, 0%, 10%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(0, 0%, 10%);
+  --primary: hsl(51, 100%, 50%);
+  --primary-foreground: hsl(0, 0%, 0%);
+  --secondary: hsl(0, 0%, 96%);
+  --secondary-foreground: hsl(0, 0%, 10%);
+  --muted: hsl(0, 0%, 96%);
+  --muted-foreground: hsl(0, 0%, 45%);
+  --accent: hsl(39, 100%, 50%);
+  --accent-foreground: hsl(0, 0%, 0%);
+  --destructive: hsl(0, 100%, 50%);
+  --destructive-foreground: hsl(0, 0%, 98%);
+  --border: hsl(0, 0%, 0%);
+  --input: hsl(0, 0%, 100%);
+  --ring: hsl(51, 100%, 50%);
+  --chart-1: hsl(203.8863, 88.2845%, 53.1373%);
+  --chart-2: hsl(159.7826, 100%, 36.0784%);
+  --chart-3: hsl(42.0290, 92.8251%, 56.2745%);
+  --chart-4: hsl(147.1429, 78.5047%, 41.9608%);
+  --chart-5: hsl(341.4894, 75.2000%, 50.9804%);
+  --sidebar: hsl(0, 0%, 100%);
+  --sidebar-foreground: hsl(0, 0%, 10%);
+  --sidebar-primary: hsl(51, 100%, 50%);
+  --sidebar-primary-foreground: hsl(0, 0%, 0%);
+  --sidebar-accent: hsl(0, 0%, 96%);
+  --sidebar-accent-foreground: hsl(0, 0%, 10%);
+  --sidebar-border: hsl(0, 0%, 0%);
+  --sidebar-ring: hsl(51, 100%, 50%);
+  --font-sans: 'Arial Black', Arial, sans-serif;
+  --font-serif: 'Times New Roman', serif;
+  --font-mono: 'Courier New', monospace;
+  --radius: 0.5rem;
+  --shadow-2xs: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1);
+  --shadow-xs: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1);
+  --shadow-sm: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1), 0px 1px 2px -1px hsl(0, 0%, 0%, 0.1);
+  --shadow: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1), 0px 1px 2px -1px hsl(0, 0%, 0%, 0.1);
+  --shadow-md: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1), 0px 2px 4px -1px hsl(0, 0%, 0%, 0.1);
+  --shadow-lg: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1), 0px 4px 6px -1px hsl(0, 0%, 0%, 0.1);
+  --shadow-xl: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1), 0px 8px 10px -1px hsl(0, 0%, 0%, 0.1);
+  --shadow-2xl: 0px 2px 0px 0px hsl(0, 0%, 0%, 0.1);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+.dark {
+  --background: hsl(0, 0%, 0%);
+  --foreground: hsl(200, 6.6667%, 91.1765%);
+  --card: hsl(228, 9.8039%, 10%);
+  --card-foreground: hsl(0, 0%, 85.0980%);
+  --popover: hsl(0, 0%, 0%);
+  --popover-foreground: hsl(200, 6.6667%, 91.1765%);
+  --primary: hsl(51, 100%, 50%);
+  --primary-foreground: hsl(0, 0%, 0%);
+  --secondary: hsl(195.0000, 15.3846%, 94.9020%);
+  --secondary-foreground: hsl(210, 25%, 7.8431%);
+  --muted: hsl(0, 0%, 9.4118%);
+  --muted-foreground: hsl(210, 3.3898%, 46.2745%);
+  --accent: hsl(39, 100%, 50%);
+  --accent-foreground: hsl(0, 0%, 0%);
+  --destructive: hsl(0, 100%, 50%);
+  --destructive-foreground: hsl(0, 0%, 98%);
+  --border: hsl(0, 0%, 0%);
+  --input: hsl(207.6923, 27.6596%, 18.4314%);
+  --ring: hsl(51, 100%, 50%);
+  --chart-1: hsl(203.8863, 88.2845%, 53.1373%);
+  --chart-2: hsl(159.7826, 100%, 36.0784%);
+  --chart-3: hsl(42.0290, 92.8251%, 56.2745%);
+  --chart-4: hsl(147.1429, 78.5047%, 41.9608%);
+  --chart-5: hsl(341.4894, 75.2000%, 50.9804%);
+  --sidebar: hsl(228, 9.8039%, 10%);
+  --sidebar-foreground: hsl(0, 0%, 85.0980%);
+  --sidebar-primary: hsl(51, 100%, 50%);
+  --sidebar-primary-foreground: hsl(0, 0%, 0%);
+  --sidebar-accent: hsl(205.7143, 70%, 7.8431%);
+  --sidebar-accent-foreground: hsl(203.7736, 87.6033%, 52.5490%);
+  --sidebar-border: hsl(205.7143, 15.7895%, 26.0784%);
+  --sidebar-ring: hsl(51, 100%, 50%);
+  --font-sans: 'Arial Black', Arial, sans-serif;
+  --font-serif: 'Times New Roman', serif;
+  --font-mono: 'Courier New', monospace;
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+/* Retro Design Elements */
+.retro-border {
+  border: 4px solid black;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.8);
+}
+
+.snap-header {
+  background: linear-gradient(45deg, #FFD700, #FFA500);
+  border: 4px solid black;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.connection-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.connected {
+  background-color: #00FF00;
+  animation: pulse 2s infinite;
+}
+
+.disconnected {
+  background-color: #FF0000;
+}
+
+.reconnecting {
+  background-color: #FFA500;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.live-update {
+  animation: bounce 0.5s;
+}
+
+.participant-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid black;
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.moving {
+  background-color: #00FF00;
+  animation: pulse-fast 1s infinite;
+}
+
+.stationary {
+  background-color: #FFD700;
+}
+
+.far {
+  background-color: #FF4500;
+}
+
+@keyframes pulse-fast {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Custom animations */
+.bounce-slow {
+  animation: bounce 2s infinite;
+}
+
+/* Ensure form inputs have the proper retro styling */
+input[type="text"], 
+input[type="email"], 
+input[type="password"], 
+input[type="datetime-local"], 
+input[type="date"], 
+input[type="time"] {
+  border: 4px solid black !important;
+  font-weight: bold !important;
+}
+
+input[type="text"]:focus, 
+input[type="email"]:focus, 
+input[type="password"]:focus, 
+input[type="datetime-local"]:focus, 
+input[type="date"]:focus, 
+input[type="time"]:focus {
+  ring: 4px;
+  ring-color: var(--primary);
+  outline: none;
+}
+
+input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  border: 4px solid black;
+  accent-color: var(--primary);
+}
+
+/* Button styling to match retro design */
+button {
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Toast styling */
+.toast {
+  border: 4px solid black;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.8);
+  font-weight: bold;
+}

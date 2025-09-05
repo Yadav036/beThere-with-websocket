@@ -267,86 +267,126 @@ export default function Home() {
 
         {/* Your Events */}
         <Card className="retro-border p-6">
-          <CardHeader>
-            <CardTitle className="text-2xl font-black text-black">YOUR EVENTS</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {eventsLoading ? (
-              <div className="text-center py-8">
-                <div className="text-xl font-black text-primary">📸 LOADING EVENTS...</div>
-              </div>
-            ) : !events || events.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="text-xl font-black text-muted-foreground">📅 NO EVENTS YET</div>
-                <p className="text-lg font-bold text-muted-foreground mt-2">
-                  Create your first event to get started!
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {events.map((event) => {
-                  const isActive = new Date(event.datetime) > new Date();
-                  const isPast = new Date(event.datetime) < new Date();
-                  
-                  return (
-                    <Card
-                      key={event.id}
-                      className="retro-border cursor-pointer hover:shadow-lg transition-shadow"
-                      onClick={() => setLocation(`/event/${event.id}`)}
-                    >
-                      <CardContent className="p-4 space-y-3">
-                        <div className="flex items-start justify-between">
-                          <h3 className="text-lg font-black text-black truncate">
-                            {event.name}
-                          </h3>
-                          <Badge className={`ml-2 font-bold retro-border ${
-                            isActive ? 'bg-green-500' : isPast ? 'bg-muted' : 'bg-orange-500'
-                          } text-black`}>
-                            {isActive ? 'LIVE' : isPast ? 'ENDED' : 'UPCOMING'}
-                          </Badge>
-                        </div>
-                        
-                        <div className="space-y-2 text-sm font-semibold">
-                          <div className="flex items-center">
-                            <span>📍 {event.location}</span>
-                          </div>
-                          <div className="flex items-center">
-                            <span>⏰ {new Date(event.datetime).toLocaleDateString()} at {new Date(event.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>👥 {event.participants?.length || 0} participants</span>
-                            {event.allowLocationSharing && (
-                              <Badge className="bg-primary text-black text-xs font-bold">
-                                📡 TRACKING
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
+  <CardHeader>
+    <CardTitle className="text-2xl font-black text-black">YOUR EVENTS</CardTitle>
+  </CardHeader>
+  <CardContent>
+    {eventsLoading ? (
+      <div className="text-center py-8">
+        <div className="text-xl font-black text-primary">📸 LOADING EVENTS...</div>
+      </div>
+    ) : !events || events.length === 0 ? (
+      <div className="text-center py-8">
+        <div className="text-xl font-black text-muted-foreground">📅 NO EVENTS YET</div>
+        <p className="text-lg font-bold text-muted-foreground mt-2">
+          Create your first event to get started!
+        </p>
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {events.map((event) => {
+          const isActive = new Date(event.datetime) > new Date();
+          const isPast = new Date(event.datetime) < new Date();
+          const isCreator = event.creatorId === user.id; // assumes you have user from auth context
 
-                        {event.description && (
-                          <p className="text-sm text-muted-foreground font-medium truncate">
-                            {event.description}
-                          </p>
-                        )}
+          return (
+            <Card
+              key={event.id}
+              className="retro-border cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => setLocation(`/event/${event.id}`)}
+            >
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start justify-between">
+                  <h3 className="text-lg font-black text-black truncate">
+                    {event.name}
+                  </h3>
+                  <Badge
+                    className={`ml-2 font-bold retro-border ${
+                      isActive ? "bg-green-500" : isPast ? "bg-muted" : "bg-orange-500"
+                    } text-black`}
+                  >
+                    {isActive ? "LIVE" : isPast ? "ENDED" : "UPCOMING"}
+                  </Badge>
+                </div>
 
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLocation(`/event/${event.id}`);
-                          }}
-                          className="w-full bg-secondary text-black font-bold retro-border hover:bg-primary"
-                          size="sm"
-                        >
-                          {isActive ? '🔴 JOIN LIVE' : '📋 VIEW DETAILS'}
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                <div className="space-y-2 text-sm font-semibold">
+                  <div className="flex items-center">
+                    <span>📍 {event.location}</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span>
+                      ⏰{" "}
+                      {new Date(event.datetime).toLocaleDateString()} at{" "}
+                      {new Date(event.datetime).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>👥 {event.participants?.length || 0} participants</span>
+                    {event.allowLocationSharing && (
+                      <Badge className="bg-primary text-black text-xs font-bold">
+                        📡 TRACKING
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {event.description && (
+                  <p className="text-sm text-muted-foreground font-medium truncate">
+                    {event.description}
+                  </p>
+                )}
+
+                <div className="flex space-x-2">
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLocation(`/event/${event.id}`);
+                    }}
+                    className="flex-1 bg-secondary text-black font-bold retro-border hover:bg-primary"
+                    size="sm"
+                  >
+                    {isActive ? "🔴 JOIN LIVE" : "📋 VIEW DETAILS"}
+                  </Button>
+
+                  {isCreator && (
+                    <Button
+  onClick={async (e) => {
+    e.stopPropagation();
+    try {
+      await fetch(`/api/events/${event.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // ✅ Use queryClient to refetch events
+      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+    } catch (err) {
+      console.error("Failed to delete event", err);
+      toast({
+        title: "Delete failed",
+        description: "Could not delete event",
+        variant: "destructive"
+      });
+    }
+  }}
+  className="bg-red-500 text-white font-bold retro-border hover:bg-red-600"
+  size="sm"
+>
+  ❌
+</Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    )}
+  </CardContent>
+</Card>
+
 
         {/* Quick Stats */}
         {events && events.length > 0 && (

@@ -21,33 +21,6 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
 }
 
 /**
- * Calculate estimated time of arrival based on distance
- * Assumes average travel speed and includes buffer time
- * @param distanceKm Distance in kilometers
- * @param averageSpeedKmh Average speed in km/h (default: 40 km/h for mixed traffic)
- * @returns ETA in minutes
- */
-export function calculateETA(distanceKm: number, averageSpeedKmh: number = 40): number {
-  if (distanceKm <= 0) return 0;
-  
-  // Base travel time
-  const baseTimeHours = distanceKm / averageSpeedKmh;
-  const baseTimeMinutes = baseTimeHours * 60;
-  
-  // Add buffer time based on distance (traffic, stops, etc.)
-  let bufferMinutes = 0;
-  if (distanceKm > 10) {
-    bufferMinutes = 10; // 10 min buffer for long distances
-  } else if (distanceKm > 5) {
-    bufferMinutes = 5; // 5 min buffer for medium distances
-  } else if (distanceKm > 1) {
-    bufferMinutes = 2; // 2 min buffer for short distances
-  }
-  
-  return Math.round(baseTimeMinutes + bufferMinutes);
-}
-
-/**
  * Check if a participant has moved significantly
  * @param oldLat Previous latitude
  * @param oldLng Previous longitude
@@ -96,7 +69,7 @@ export function formatDistance(distanceKm: number): string {
 
 /**
  * Format ETA for display
- * @param etaMinutes ETA in minutes
+ * @param etaMinutes ETA in minutes from Google Maps API
  * @returns Formatted ETA string
  */
 export function formatETA(etaMinutes: number): string {

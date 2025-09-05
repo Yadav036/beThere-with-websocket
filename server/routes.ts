@@ -347,8 +347,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const prisma = new PrismaClient()
 
-  // Auth routes - These were already correct
-  app.post('/api/auth/signup', async (req, res) => {
+ app.post('/api/auth/signup', async (req, res) => {
     try {
       const { email, username, password } = req.body
 
@@ -398,7 +397,225 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ error: "Invalid input data" })
     }
   })
-  // Google Directions API route
+
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password required" });
+      }
+
+      // Find user by email
+      const user = await prisma.user.findUnique({ 
+        where: { email } 
+      });
+
+      if (!user) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      // Verify password
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { sub: user.id, email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      console.log('✅ User login successful:', user.username);
+
+      res.json({ 
+        user: { 
+          id: user.id, 
+          email: user.email, 
+          username: user.username 
+        }, 
+        token 
+      });
+    } catch (error) {
+      console.error('❌ Login error:', error);
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+
+
+  app.post('/api/events', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      console.log('📍 Creating event for user:', req.user!.sub);
+      console.log('📍 Request body:', JSON.stringify(req.body, null, 2));
+      
+      // Validate and parse the event data
+      const eventData = insertEventSchema.parse({
+        ...req.body,
+        datetime: new Date(req.body.datetime), // convert string to Date
+        creatorId: req.user!.sub,
+      });
+
+      console.log('📍 Parsed event data:', JSON.stringify(eventData, null, 2));
+
+      // Create the event
+      const event = await storage.createEvent(eventData);
+      console.log('✅ Event created with ID:', event.id);
+      
+      // Get the event with participants
+      const eventWithParticipants = await storage.getEventWithParticipants(event.id, req.user!.sub);
+      
+      res.json(eventWithParticipants);
+    } catch (error) {
+      console.error('❌ Failed to create event:', error);
+      
+      // Better error handling
+      if (error instanceof Error) {
+        // Zod validation errors
+        if (error.name === 'ZodError') {
+          return res.status(400).json({ 
+            error: "Invalid event data", 
+            details: error.message 
+          });
+        }
+        
+        // Other errors
+        return res.status(400).json({ 
+          error: "Failed to create event", 
+          details: error.message 
+        });
+      }
+      
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  
+
+  app.get('/api/events', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const events = await storage.getUserEvents(req.user!.sub);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get events" });
+    }
+  });
+
+
+  app.get('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const eventId = req.params.id;
+      const userId = req.user!.sub;
+      
+      console.log('📍 Fetching event:', eventId, 'for user:', userId);
+      
+      // First try to get event with participants if user is already involved
+      let event = await storage.getEventWithParticipants(eventId, userId);
+      
+      // If not found (user not creator/participant), get basic event info
+      if (!event) {
+        const basicEvent = await storage.getEvent(eventId);
+        if (!basicEvent) {
+          return res.status(404).json({ error: "Event not found" });
+        }
+        
+        // Return basic event info - user can join via separate endpoint
+        event = {
+          ...basicEvent,
+          creator: null, // We'll need to fetch this separately if needed
+          participants: [],
+          isCreator: false
+        };
+      }
+      
+      res.json(event);
+    } catch (error) {
+      console.error('❌ Failed to get event:', error);
+      res.status(500).json({ error: "Failed to get event" });
+    }
+  });
+
+
+  app.post('/api/events/:id/join', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const eventId = req.params.id;
+      const userId = req.user!.sub;
+      
+      console.log('🤝 User joining event:', { eventId, userId });
+      
+      // Check if event exists
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+      
+      // Add user as participant (your joinEvent method handles duplicates)
+      const participant = await storage.joinEvent(eventId, userId);
+      
+      console.log('✅ User successfully joined event:', participant);
+      res.json({ message: "Successfully joined event", participant });
+      
+    } catch (error) {
+      console.error('❌ Failed to join event:', error);
+      res.status(500).json({ error: "Failed to join event" });
+    }
+  });
+
+  app.post('/api/events/:id/leave', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const left = await storage.leaveEvent(req.params.id, req.user!.sub);
+      if (!left) {
+        return res.status(404).json({ error: "Not a participant" });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to leave event" });
+    }
+  });
+
+  app.get('/api/events/:id/participants', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const participants = await storage.getEventParticipants(req.params.id);
+      res.json(participants);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get participants" });
+    }
+  });
+
+
+app.delete('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const event = await storage.getEvent(req.params.id);
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    if (event.creatorId !== req.user!.sub) {
+      return res.status(403).json({ error: "Only the creator can delete this event" });
+    }
+
+    // ✅ Pass both id and userId
+    await storage.deleteEvent(req.params.id, req.user!.sub);
+
+    broadcastToEvent(req.params.id, {
+      type: 'event_deleted',
+      data: {
+        eventId: req.params.id
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Delete error:", error); // Add logging
+    res.status(500).json({ error: "Failed to delete event" });
+  }
+});
+
+
 app.get('/api/directions', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {
     const { origin, destination, mode = 'driving' } = req.query;
@@ -470,220 +687,6 @@ app.get('/api/directions', authenticateToken, async (req: AuthenticatedRequest, 
   }
 });
 
-  app.post('/api/auth/login', async (req, res) => {
-    try {
-      const { email, password } = req.body;
-      
-      if (!email || !password) {
-        return res.status(400).json({ error: "Email and password required" });
-      }
-
-      // Find user by email
-      const user = await prisma.user.findUnique({ 
-        where: { email } 
-      });
-
-      if (!user) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-
-      // Verify password
-      const isValidPassword = await bcrypt.compare(password, user.password);
-      if (!isValidPassword) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-
-      // Generate JWT token
-      const token = jwt.sign(
-        { sub: user.id, email: user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: "7d" }
-      );
-
-      console.log('✅ User login successful:', user.username);
-
-      res.json({ 
-        user: { 
-          id: user.id, 
-          email: user.email, 
-          username: user.username 
-        }, 
-        token 
-      });
-    } catch (error) {
-      console.error('❌ Login error:', error);
-      res.status(500).json({ error: "Login failed" });
-    }
-  });
-
-  // All other routes remain the same - they were already using the correct authenticateToken middleware
-  app.get('/api/events', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    try {
-      const events = await storage.getUserEvents(req.user!.sub);
-      res.json(events);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to get events" });
-    }
-  });
-
-  app.post('/api/events', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    try {
-      console.log('📍 Creating event for user:', req.user!.sub);
-      console.log('📍 Request body:', JSON.stringify(req.body, null, 2));
-      
-      // Validate and parse the event data
-      const eventData = insertEventSchema.parse({
-        ...req.body,
-        datetime: new Date(req.body.datetime), // convert string to Date
-        creatorId: req.user!.sub,
-      });
-
-      console.log('📍 Parsed event data:', JSON.stringify(eventData, null, 2));
-
-      // Create the event
-      const event = await storage.createEvent(eventData);
-      console.log('✅ Event created with ID:', event.id);
-      
-      // Get the event with participants
-      const eventWithParticipants = await storage.getEventWithParticipants(event.id, req.user!.sub);
-      
-      res.json(eventWithParticipants);
-    } catch (error) {
-      console.error('❌ Failed to create event:', error);
-      
-      // Better error handling
-      if (error instanceof Error) {
-        // Zod validation errors
-        if (error.name === 'ZodError') {
-          return res.status(400).json({ 
-            error: "Invalid event data", 
-            details: error.message 
-          });
-        }
-        
-        // Other errors
-        return res.status(400).json({ 
-          error: "Failed to create event", 
-          details: error.message 
-        });
-      }
-      
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-app.delete('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
-  try {
-    const event = await storage.getEvent(req.params.id);
-
-    if (!event) {
-      return res.status(404).json({ error: "Event not found" });
-    }
-
-    if (event.creatorId !== req.user!.sub) {
-      return res.status(403).json({ error: "Only the creator can delete this event" });
-    }
-
-    // ✅ Pass both id and userId
-    await storage.deleteEvent(req.params.id, req.user!.sub);
-
-    broadcastToEvent(req.params.id, {
-      type: 'event_deleted',
-      data: {
-        eventId: req.params.id
-      }
-    });
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Delete error:", error); // Add logging
-    res.status(500).json({ error: "Failed to delete event" });
-  }
-});
-
-
-  // GET single event by ID - anyone with auth can view any event
-  app.get('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    try {
-      const eventId = req.params.id;
-      const userId = req.user!.sub;
-      
-      console.log('📍 Fetching event:', eventId, 'for user:', userId);
-      
-      // First try to get event with participants if user is already involved
-      let event = await storage.getEventWithParticipants(eventId, userId);
-      
-      // If not found (user not creator/participant), get basic event info
-      if (!event) {
-        const basicEvent = await storage.getEvent(eventId);
-        if (!basicEvent) {
-          return res.status(404).json({ error: "Event not found" });
-        }
-        
-        // Return basic event info - user can join via separate endpoint
-        event = {
-          ...basicEvent,
-          creator: null, // We'll need to fetch this separately if needed
-          participants: [],
-          isCreator: false
-        };
-      }
-      
-      res.json(event);
-    } catch (error) {
-      console.error('❌ Failed to get event:', error);
-      res.status(500).json({ error: "Failed to get event" });
-    }
-  });
-
-  // POST join event - adds user as participant when they visit event URL
-  app.post('/api/events/:id/join', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    try {
-      const eventId = req.params.id;
-      const userId = req.user!.sub;
-      
-      console.log('🤝 User joining event:', { eventId, userId });
-      
-      // Check if event exists
-      const event = await storage.getEvent(eventId);
-      if (!event) {
-        return res.status(404).json({ error: "Event not found" });
-      }
-      
-      // Add user as participant (your joinEvent method handles duplicates)
-      const participant = await storage.joinEvent(eventId, userId);
-      
-      console.log('✅ User successfully joined event:', participant);
-      res.json({ message: "Successfully joined event", participant });
-      
-    } catch (error) {
-      console.error('❌ Failed to join event:', error);
-      res.status(500).json({ error: "Failed to join event" });
-    }
-  });
-
-  app.post('/api/events/:id/leave', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    try {
-      const left = await storage.leaveEvent(req.params.id, req.user!.sub);
-      if (!left) {
-        return res.status(404).json({ error: "Not a participant" });
-      }
-
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to leave event" });
-    }
-  });
-
-  app.get('/api/events/:id/participants', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    try {
-      const participants = await storage.getEventParticipants(req.params.id);
-      res.json(participants);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to get participants" });
-    }
-  });
-
-  // User search route
   app.get('/api/users/search', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       const query = req.query.q as string;
@@ -702,7 +705,7 @@ app.delete('/api/events/:id', authenticateToken, async (req: AuthenticatedReques
     }
   });
 
-  // Invite routes
+
   app.post('/api/invites', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       const inviteData = insertEventInviteSchema.parse({

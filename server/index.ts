@@ -1,13 +1,30 @@
 import express, { type Request, Response, NextFunction } from "express";
+import { createServer } from "http";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+const server = createServer(app);
 
-// API request logger
+// Basic middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
+
+// Trust proxy for EC2/Load Balancer setup
+app.set('trust proxy', 1);
+
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
+// API request logger (only for API routes)
 app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+
   const start = Date.now();
   const path = req.path;
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
@@ -20,43 +37,100 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-      log(logLine);
+    let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+    
+    if (capturedJsonResponse) {
+      const jsonStr = JSON.stringify(capturedJsonResponse);
+      logLine += ` :: ${jsonStr.length > 100 ? jsonStr.slice(0, 97) + "..." : jsonStr}`;
     }
+    
+    log(logLine.length > 120 ? logLine.slice(0, 117) + "..." : logLine, "api");
   });
 
   next();
 });
 
-(async () => {
-  const server = await registerRoutes(app);
+async function startServer() {
+  try {
+    // Register API routes first
+    await registerRoutes(app, server);
 
-  // error handler (don’t throw again, just log)
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    log(`Error: ${status} - ${message}`);
-    res.status(status).json({ message });
-  });
+    // Setup client serving based on environment
+    if (process.env.NODE_ENV === "production") {
+      log("Starting in production mode", "server");
+      serveStatic(app);
+    } else {
+      log("Starting in development mode with Vite", "server");
+      await setupVite(app, server);
+    }
 
-  // vite in dev, static in prod
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+    // Global error handler
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
+      
+      log(`Error ${status}: ${message}`, "error");
+      
+      // Don't leak error details in production
+      const errorResponse = process.env.NODE_ENV === "production" 
+        ? { error: status >= 500 ? "Internal Server Error" : message }
+        : { error: message, stack: err.stack };
+
+      res.status(status).json(errorResponse);
+    });
+
+    // Health check endpoint
+    app.get('/health', (_req, res) => {
+      res.status(200).json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        env: process.env.NODE_ENV || 'development'
+      });
+    });
+
+    const port = parseInt(process.env.PORT || "3000", 10);
+    const host = process.env.NODE_ENV === "production" ? "0.0.0.0" : "localhost";
+
+    server.listen(port, host, () => {
+      log(`Server running on http://${host}:${port}`, "server");
+      
+      if (process.env.NODE_ENV !== "production") {
+        log(`Health check: http://${host}:${port}/health`, "server");
+      }
+    });
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      log('SIGTERM received, shutting down gracefully', "server");
+      server.close(() => {
+        log('Server closed', "server");
+        process.exit(0);
+      });
+    });
+
+    process.on('SIGINT', () => {
+      log('SIGINT received, shutting down gracefully', "server");
+      server.close(() => {
+        log('Server closed', "server");
+        process.exit(0);
+      });
+    });
+
+  } catch (error) {
+    log(`Failed to start server: ${error}`, "error");
+    process.exit(1);
   }
+}
 
-  // use PORT env var, default 5000
-  const port = parseInt(process.env.PORT || "5000", 10);
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  log(`Unhandled Rejection at: ${promise}, reason: ${reason}`, "error");
+});
 
-  server.listen(port, () => {
-    log(`Serving on http://localhost:${port}`);
-  });
-})();
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  log(`Uncaught Exception: ${error.message}`, "error");
+  process.exit(1);
+});
+
+startServer();

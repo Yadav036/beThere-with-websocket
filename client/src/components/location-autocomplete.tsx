@@ -46,6 +46,7 @@ export function LocationAutocomplete({
                     import.meta.env.VITE_MAPS_API_KEY;
       
       if (!apiKey) {
+        console.error('Google Maps API key not found');
         return;
       }
 
@@ -65,7 +66,8 @@ export function LocationAutocomplete({
           delete window.initGoogleMaps;
         };
         
-        script.onerror = () => {
+        script.onerror = (error) => {
+          console.error('Failed to load Google Maps API:', error);
           setIsGoogleMapsLoaded(false);
         };
         
@@ -90,7 +92,7 @@ export function LocationAutocomplete({
           );
         }
       } catch (error) {
-        // Silent fail
+        console.error('Error initializing Google Maps services:', error);
       }
     }
   }, [isGoogleMapsLoaded]);
@@ -105,104 +107,80 @@ export function LocationAutocomplete({
     setIsLoading(true);
     
     try {
-      // Try new API first
-      if (window.google.maps.places.AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
+      // Use the correct JavaScript Maps API AutocompleteService
+      if (autocompleteService.current) {
         const request = {
           input: query,
-          locationBias: {
-            center: { lat: 12.9716, lng: 77.5946 },
-            radius: 100000
-          },
-          includedPrimaryTypes: ['establishment', 'geocode']
+          location: new window.google.maps.LatLng(12.9716, 77.5946), // Bengaluru
+          radius: 100000,
+          types: ['establishment', 'geocode']
         };
         
-        const { suggestions: newSuggestions } = await window.google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
-        
-        if (newSuggestions && newSuggestions.length > 0) {
-          const formattedSuggestions = newSuggestions.slice(0, 5).map((suggestion: any) => ({
-            place_id: suggestion.place.id,
-            description: suggestion.place.displayName || suggestion.place.formattedAddress,
-          }));
-          
-          setSuggestions(formattedSuggestions);
-          setShowSuggestions(true);
-          setIsLoading(false);
-          return;
-        }
-      }
-    } catch (error) {
-      // Fall through to legacy API
-    }
-
-    // Fallback to legacy API
-    if (autocompleteService.current) {
-      autocompleteService.current.getPlacePredictions(
-        {
-          input: query,
-          types: ['establishment', 'geocode'],
-        },
-        (predictions: any[], status: string) => {
+        autocompleteService.current.getPlacePredictions(request, (predictions: any[], status: any) => {
           setIsLoading(false);
           
           if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
-            const formattedSuggestions = predictions.slice(0, 5).map(prediction => ({
+            const formattedSuggestions = predictions.slice(0, 5).map((prediction: any) => ({
               place_id: prediction.place_id,
               description: prediction.description,
+              structured_formatting: prediction.structured_formatting
             }));
+            
             setSuggestions(formattedSuggestions);
             setShowSuggestions(true);
           } else {
+            console.log('Places API status:', status);
             setSuggestions([]);
             setShowSuggestions(false);
           }
-        }
-      );
-    } else {
+        });
+      } else {
+        console.error('AutocompleteService not initialized');
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Error fetching places:', error);
       setIsLoading(false);
+      setSuggestions([]);
+      setShowSuggestions(false);
     }
   };
 
   const getPlaceDetails = async (placeId: string, description: string) => {
     try {
-      // Try new API first
-      if (window.google.maps.places.Place?.fetchFields) {
-        const { place } = await window.google.maps.places.Place.fetchFields({
-          id: placeId,
-          fields: ['displayName', 'formattedAddress', 'location'],
-        });
-        
-        const lat = place.location.lat();
-        const lng = place.location.lng();
-        const address = place.formattedAddress || place.displayName || description;
-        
-        onChange(address);
-        onLocationSelect?.({ lat, lng, address });
+      if (placesService.current) {
+        placesService.current.getDetails(
+          {
+            placeId: placeId,
+            fields: ['geometry', 'formatted_address', 'name']
+          },
+          (place: any, status: string) => {
+            if (status === window.google.maps.places.PlacesServiceStatus.OK && place) {
+              const lat = place.geometry.location.lat();
+              const lng = place.geometry.location.lng();
+              const address = place.formatted_address || place.name || description;
+              
+              onChange(address);
+              onLocationSelect?.({ lat, lng, address });
+              setShowSuggestions(false);
+            } else {
+              console.error('Place details error:', status);
+              // Fallback to just using the description
+              onChange(description);
+              setShowSuggestions(false);
+            }
+          }
+        );
+      } else {
+        // Fallback if places service is not available
+        onChange(description);
         setShowSuggestions(false);
-        return;
       }
     } catch (error) {
-      // Fall through to legacy API
-    }
-
-    // Fallback to legacy API
-    if (placesService.current) {
-      placesService.current.getDetails(
-        {
-          placeId: placeId,
-          fields: ['geometry', 'formatted_address']
-        },
-        (place: any, status: string) => {
-          if (status === window.google.maps.places.PlacesServiceStatus.OK && place) {
-            const lat = place.geometry.location.lat();
-            const lng = place.geometry.location.lng();
-            const address = place.formatted_address || description;
-            
-            onChange(address);
-            onLocationSelect?.({ lat, lng, address });
-            setShowSuggestions(false);
-          }
-        }
-      );
+      console.error('Error getting place details:', error);
+      // Fallback to just using the description
+      onChange(description);
+      setShowSuggestions(false);
     }
   };
 

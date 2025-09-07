@@ -10,6 +10,9 @@ RUN npm install
 # Copy project files
 COPY . .
 
+# Generate Prisma client
+RUN npx prisma generate
+
 # Build frontend + backend
 RUN npm run build
 
@@ -18,12 +21,11 @@ FROM node:18-bullseye-slim
 
 WORKDIR /app
 
-# Copy only built files + package.json
+# Copy built files + node_modules + Prisma client
 COPY --from=builder /app/dist ./dist
-COPY package*.json ./
-
-# Install only production deps
-RUN npm install 
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
 
 EXPOSE 5001
 

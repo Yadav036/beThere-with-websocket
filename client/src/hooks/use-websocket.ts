@@ -1,6 +1,8 @@
 "use client"
 
+
 import { useEffect, useRef, useState, useCallback } from "react"
+import { io, Socket } from "socket.io-client"
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting"
 
@@ -14,38 +16,31 @@ interface UseWebSocketOptions {
   reconnectDelay?: number
 }
 
-export function useWebSocket({
-  token,
-  eventId,
-  onMessage,
-  onConnect,
-  onDisconnect,
-  reconnectAttempts = 5,
-  reconnectDelay = 3000,
-}: UseWebSocketOptions) {
+export function useWebSocket(options: UseWebSocketOptions) {
+  const {
+    token,
+    eventId,
+    onMessage,
+    onConnect,
+    onDisconnect,
+    reconnectAttempts = 5,
+    reconnectDelay = 3000,
+  } = options;
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected")
   const [isConnected, setIsConnected] = useState(false)
 
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const socketRef = useRef<Socket | null>(null)
   const reconnectCountRef = useRef(0)
-  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const manualDisconnectRef = useRef(false)
-
   const currentEventIdRef = useRef<string | undefined>(eventId)
   const isInitializedRef = useRef(false)
 
   const disconnect = useCallback(() => {
     manualDisconnectRef.current = true
-
-    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
-    if (pingIntervalRef.current) clearInterval(pingIntervalRef.current)
-
-    if (wsRef.current) {
-      wsRef.current.close(1000, "Client disconnect")
-      wsRef.current = null
+    if (socketRef.current) {
+      socketRef.current.disconnect()
+      socketRef.current = null
     }
-
     setConnectionStatus("disconnected")
     setIsConnected(false)
     reconnectCountRef.current = 0
@@ -53,74 +48,62 @@ export function useWebSocket({
 
   const connect = useCallback(() => {
     if (!token) return
-    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
+    if (socketRef.current && socketRef.current.connected) return
 
     setConnectionStatus("connecting")
 
-    try {
-      const wsUrl = new URL("/ws", window.location.origin)
-      wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:"
-      wsUrl.searchParams.set("token", token)
-      if (eventId) wsUrl.searchParams.set("eventId", eventId)
+    // Build socket.io options
+    const opts: any = {
+      path: "/socket.io",
+      transports: ["websocket"],
+      auth: { token },
+      query: eventId ? { eventId } : undefined,
+      reconnectionAttempts: reconnectAttempts,
+      reconnectionDelay: reconnectDelay,
+    }
 
-      const ws = new WebSocket(wsUrl.toString())
-      wsRef.current = ws
+    // Remove undefined query if no eventId
+    if (!eventId) delete opts.query
 
-      ws.onopen = () => {
-        manualDisconnectRef.current = false
-        setConnectionStatus("connected")
-        setIsConnected(true)
-        reconnectCountRef.current = 0
-        onConnect?.()
+    const url = window.location.origin
+    const socket = io(url, opts)
+    socketRef.current = socket
 
-        // ping
-        pingIntervalRef.current = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN)
-            ws.send(JSON.stringify({ type: "ping", timestamp: new Date().toISOString() }))
-        }, 30000)
-      }
+    socket.on("connect", () => {
+      manualDisconnectRef.current = false
+      setConnectionStatus("connected")
+      setIsConnected(true)
+      reconnectCountRef.current = 0
+      onConnect?.()
+    })
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          if (data.type !== "ping") onMessage?.(data)
-        } catch {
-          console.warn("WebSocket: failed to parse message")
-        }
-      }
-
-      ws.onclose = (event) => {
-        setConnectionStatus("disconnected")
-        setIsConnected(false)
-        wsRef.current = null
-        onDisconnect?.()
-
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current)
-
-        // reconnect if not manual
-        if (!manualDisconnectRef.current && reconnectCountRef.current < reconnectAttempts) {
-          reconnectCountRef.current++
-          setConnectionStatus("reconnecting")
-          reconnectTimeoutRef.current = setTimeout(
-            connect,
-            reconnectDelay * Math.pow(1.5, reconnectCountRef.current - 1),
-          )
-        }
-      }
-
-      ws.onerror = () => {
-        setConnectionStatus("disconnected")
-        setIsConnected(false)
-      }
-    } catch {
+    socket.on("disconnect", (reason: string) => {
       setConnectionStatus("disconnected")
       setIsConnected(false)
-    }
+      onDisconnect?.()
+      // reconnect if not manual
+      if (!manualDisconnectRef.current && reconnectCountRef.current < reconnectAttempts) {
+        reconnectCountRef.current++
+        setConnectionStatus("reconnecting")
+        setTimeout(connect, reconnectDelay * Math.pow(1.5, reconnectCountRef.current - 1))
+      }
+    })
+
+    socket.on("connect_error", () => {
+      setConnectionStatus("disconnected")
+      setIsConnected(false)
+    })
+
+    socket.onAny((event, ...args) => {
+      // Ignore internal ping/pong
+      if (event === "ping" || event === "pong") return
+      onMessage?.({ type: event, ...args[0] })
+    })
   }, [token, eventId, onMessage, onConnect, onDisconnect, reconnectAttempts, reconnectDelay])
 
-  const sendMessage = useCallback((message: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(message))
+  const sendMessage = useCallback((event: string, data?: any) => {
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit(event, data)
       return true
     }
     return false
@@ -151,5 +134,11 @@ export function useWebSocket({
     }, 500)
   }, [eventId, token])
 
-  return { connectionStatus, isConnected, sendMessage, connect, disconnect }
+  return {
+    connectionStatus,
+    isConnected,
+    sendMessage,
+    connect,
+    disconnect,
+  }
 }

@@ -1,8 +1,8 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { WebSocketServer, WebSocket } from "ws";
+import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./prisma-storage";
-import { insertUserSchema, insertEventSchema, insertEventInviteSchema, wsMessageSchema, type WSMessage } from "@shared/schema";
+import { insertUserSchema, insertEventSchema, insertEventInviteSchema } from "@shared/schema";
 import { calculateDistance } from "../client/src/lib/haversine";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client"
@@ -11,13 +11,18 @@ import bcrypt from "bcryptjs"
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-interface AuthenticatedRequest extends Request {
-  user?: { sub: string; email: string };
+// Validate environment variables
+if (!JWT_SECRET) {
+  console.error("JWT_SECRET environment variable is required");
+  process.exit(1);
 }
 
-interface AuthenticatedWebSocket extends WebSocket {
-  userId?: string;
-  eventId?: string;
+if (!GOOGLE_MAPS_API_KEY) {
+  console.warn("GOOGLE_MAPS_API_KEY not set - ETA calculations will not work");
+}
+
+interface AuthenticatedRequest extends Request {
+  user?: { sub: string; email: string };
 }
 
 // Google Maps ETA calculation
@@ -48,9 +53,8 @@ async function calculateGoogleETA(originLat: number, originLng: number, destLat:
 function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   
-  console.log('🔍 Auth check:', {
+  console.log('Auth check:', {
     hasAuthHeader: !!authHeader,
-    authHeaderPreview: authHeader ? `${authHeader.substring(0, 20)}...` : 'none',
     method: req.method,
     path: req.path
   });
@@ -59,36 +63,36 @@ function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextF
   
   if (authHeader) {
     if (authHeader.startsWith('Bearer ')) {
-      token = authHeader.substring(7); // Remove "Bearer " prefix
+      token = authHeader.substring(7);
     } else {
-      token = authHeader; // Direct token (fallback)
+      token = authHeader;
     }
   }
 
   if (!token) {
-    console.log('❌ Auth failed: No token provided');
+    console.log('Auth failed: No token provided');
     return res.status(401).json({ error: "Access token required" });
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { sub: string; email: string };
+    const decoded = jwt.verify(token, JWT_SECRET!) as { sub: string; email: string };
     req.user = decoded;
-    console.log('✅ Auth successful for user:', decoded.sub);
+    console.log('Auth successful for user:', decoded.sub);
     next();
   } catch (error) {
-    console.log('❌ Auth failed: Invalid token', error instanceof Error ? error.message : 'Unknown error');
+    console.log('Auth failed: Invalid token', error instanceof Error ? error.message : 'Unknown error');
     return res.status(403).json({ error: "Invalid token" });
   }
 }
 
-function authenticateWebSocket(token: string): { sub: string; email: string } | null {
+function authenticateSocket(token: string): { sub: string; email: string } | null {
   try {
     const cleanToken = token.startsWith('Bearer ') ? token.substring(7) : token;
-    const decoded = jwt.verify(cleanToken, JWT_SECRET) as { sub: string; email: string };
-    console.log('✅ WebSocket auth successful for user:', decoded.sub);
+    const decoded = jwt.verify(cleanToken, JWT_SECRET!) as { sub: string; email: string };
+    console.log('Socket auth successful for user:', decoded.sub);
     return decoded;
   } catch (error) {
-    console.log('❌ WebSocket auth failed:', error.message);
+    console.log('Socket auth failed:', error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 }
@@ -96,277 +100,246 @@ function authenticateWebSocket(token: string): { sub: string; email: string } | 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // WebSocket server setup
-  const wss = new WebSocketServer({ 
-    server: httpServer, 
-    path: '/ws',
-    verifyClient: (info: any) => {
-      const url = new URL(info.req.url!, `http://${info.req.headers.host}`);
-      const token = url.searchParams.get('token');
-      console.log('🔍 WebSocket verifyClient:', { hasToken: !!token });
-      return token ? authenticateWebSocket(token) !== null : false;
+  // Socket.IO server setup
+  const io = new SocketIOServer(httpServer, {
+    path: '/socket.io',
+    cors: {
+      origin: process.env.NODE_ENV === 'production' ? false : ["http://localhost:5173", "http://127.0.0.1:5173"],
+      methods: ["GET", "POST"],
+      credentials: true
+    },
+    transports: ['polling', 'websocket']
+  });
+
+  // Store Socket.IO connections by user ID and event ID
+  const connections = new Map<string, Set<any>>();
+  const eventConnections = new Map<string, Set<any>>();
+
+  // Socket.IO middleware for authentication
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth.token || socket.handshake.query.token;
+      const eventId = socket.handshake.query.eventId as string;
+
+      console.log('Socket.IO auth attempt:', { 
+        hasToken: !!token, 
+        eventId: eventId || 'none',
+        socketId: socket.id
+      });
+
+      if (!token) {
+        console.log('Socket.IO rejected: No token');
+        return next(new Error('Token required'));
+      }
+
+      const auth = authenticateSocket(token as string);
+      if (!auth) {
+        console.log('Socket.IO rejected: Invalid token');
+        return next(new Error('Invalid token'));
+      }
+
+      // Attach user info to socket
+      (socket as any).userId = auth.sub;
+      (socket as any).eventId = eventId || undefined;
+
+      console.log(`Socket.IO authenticated: user ${auth.sub}, event ${eventId || 'none'}`);
+      next();
+    } catch (error) {
+      console.error('Socket.IO auth error:', error);
+      next(new Error('Authentication failed'));
     }
   });
 
-  // Store WebSocket connections by user ID and event ID
-  const connections = new Map<string, Set<AuthenticatedWebSocket>>();
-  const eventConnections = new Map<string, Set<AuthenticatedWebSocket>>();
+  io.on('connection', (socket) => {
+    const userId = (socket as any).userId;
+    const eventId = (socket as any).eventId;
 
-  wss.on('connection', (ws: AuthenticatedWebSocket, req) => {
-    const url = new URL(req.url!, `http://${req.headers.host}`);
-    const token = url.searchParams.get('token');
-    const eventId = url.searchParams.get('eventId');
-
-    console.log('🔌 WebSocket connection attempt:', { 
-      hasToken: !!token, 
-      eventId: eventId || 'none',
-      userAgent: req.headers['user-agent']
-    });
-
-    if (!token) {
-      console.log('❌ WebSocket rejected: No token');
-      ws.close(1008, 'Token required');
-      return;
-    }
-
-    const auth = authenticateWebSocket(token);
-    if (!auth) {
-      console.log('❌ WebSocket rejected: Invalid token');
-      ws.close(1008, 'Invalid token');
-      return;
-    }
-
-    ws.userId = auth.sub;
-    ws.eventId = eventId || undefined;
+    console.log(`Socket.IO connected: user ${userId}, event ${eventId || 'none'}, socket ${socket.id}`);
 
     // Add to user connections
-    if (!connections.has(auth.sub)) {
-      connections.set(auth.sub, new Set());
+    if (!connections.has(userId)) {
+      connections.set(userId, new Set());
     }
-    connections.get(auth.sub)!.add(ws);
+    connections.get(userId)!.add(socket);
 
     // Add to event connections if eventId provided
     if (eventId) {
       if (!eventConnections.has(eventId)) {
         eventConnections.set(eventId, new Set());
       }
-      eventConnections.get(eventId)!.add(ws);
+      eventConnections.get(eventId)!.add(socket);
     }
 
-    console.log(`✅ WebSocket connected: user ${auth.sub}, event ${eventId || 'none'}`);
+    // Handle ping/pong for connection health
+    socket.on('ping', () => {
+      console.log(`Received ping from user ${userId}`);
+      socket.emit('pong', { timestamp: new Date().toISOString() });
+    });
 
-    ws.on('message', async (data) => {
+    // Handle location updates
+    socket.on('location_update', async (data) => {
       try {
-        const message = JSON.parse(data.toString());
+        console.log(`Location update from ${userId}:`, data);
+        const { eventId, lat, lng } = data;
         
-        if (message.type === 'ping') {
-          console.log(`💓 Received ping from user ${ws.userId}`);
-          ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+        // Get current participant data for movement detection
+        const event = await storage.getEventWithParticipants(eventId, userId);
+        if (!event) {
+          console.log(`Location update failed: Event ${eventId} not found for user ${userId}`);
           return;
         }
-        
-        if (message.type === 'pong') {
-          console.log(`💓 Received pong from user ${ws.userId}`);
-          return;
+
+        const currentParticipant = event.userParticipant;
+        let isMoving = false;
+        let distance = 0;
+        let eta = 0;
+
+        // Calculate distance from event location
+        if (event.locationLat && event.locationLng) {
+          distance = calculateDistance(lat, lng, event.locationLat, event.locationLng);
+          
+          // Calculate ETA using Google Maps API
+          eta = await calculateGoogleETA(lat, lng, event.locationLat, event.locationLng);
         }
-        
-        const parsedMessage = wsMessageSchema.parse(message);
-        await handleWebSocketMessage(ws, parsedMessage, connections, eventConnections);
-        
+
+        // Detect movement (100m threshold)
+        if (currentParticipant?.lastLat && currentParticipant?.lastLng) {
+          const movementDistance = calculateDistance(
+            lat, lng, 
+            currentParticipant.lastLat, 
+            currentParticipant.lastLng
+          );
+          
+          const timeDiff = currentParticipant.lastLocationAt 
+            ? (Date.now() - new Date(currentParticipant.lastLocationAt).getTime()) / 1000 
+            : 0;
+          
+          // Consider moving if traveled >100m in last 30 seconds
+          isMoving = movementDistance > 0.1 && timeDiff < 30;
+        }
+
+        // Update participant location
+        const updatedParticipant = await storage.updateParticipantLocation(
+          eventId, userId, lat, lng, isMoving, eta, distance
+        );
+
+        if (updatedParticipant) {
+          // Broadcast location update to all event participants
+          broadcastToEvent(eventId, 'eta_updated', {
+            eventId,
+            participantId: userId,
+            eta,
+            distance,
+            isMoving,
+            timestamp: new Date().toISOString()
+          }, userId);
+        }
       } catch (error) {
-        if (error.name === 'ZodError') {
-          console.error('❌ WebSocket message validation error:', {
-            userId: ws.userId,
-            messageType: JSON.parse(data.toString())?.type || 'unknown',
-            errors: error.issues
-          });
-          ws.send(JSON.stringify({ 
-            error: 'Invalid message format', 
-            details: error.issues 
-          }));
-        } else {
-          console.error('❌ WebSocket message processing error:', error);
-          ws.send(JSON.stringify({ error: 'Message processing failed' }));
-        }
+        console.error('Location update error:', error);
+        socket.emit('error', { message: 'Location update failed' });
       }
     });
 
-    ws.on('close', (code, reason) => {
-      console.log(`🔌 WebSocket disconnected: user ${ws.userId}, event ${ws.eventId || 'none'}, code: ${code}, reason: ${reason || 'No reason'}`);
+    // Handle participant joined
+    socket.on('participant_joined', async (data) => {
+      try {
+        const { eventId } = data;
+        await storage.joinEvent(eventId, userId);
+        
+        const participant = await storage.getUser(userId);
+        if (participant) {
+          broadcastToEvent(eventId, 'participant_joined', {
+            eventId,
+            participant: {
+              id: userId,
+              user: participant
+            }
+          }, userId);
+        }
+      } catch (error) {
+        console.error('Participant join error:', error);
+        socket.emit('error', { message: 'Failed to join event' });
+      }
+    });
+
+    // Handle participant left
+    socket.on('participant_left', async (data) => {
+      try {
+        const { eventId } = data;
+        await storage.leaveEvent(eventId, userId);
+        
+        broadcastToEvent(eventId, 'participant_left', {
+          eventId,
+          participantId: userId
+        }, userId);
+      } catch (error) {
+        console.error('Participant leave error:', error);
+        socket.emit('error', { message: 'Failed to leave event' });
+      }
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log(`Socket.IO disconnected: user ${userId}, event ${eventId || 'none'}, reason: ${reason}`);
       
       // Remove from user connections
-      if (ws.userId && connections.has(ws.userId)) {
-        connections.get(ws.userId)!.delete(ws);
-        if (connections.get(ws.userId)!.size === 0) {
-          connections.delete(ws.userId);
+      if (userId && connections.has(userId)) {
+        connections.get(userId)!.delete(socket);
+        if (connections.get(userId)!.size === 0) {
+          connections.delete(userId);
         }
       }
 
       // Remove from event connections
-      if (ws.eventId && eventConnections.has(ws.eventId)) {
-        eventConnections.get(ws.eventId)!.delete(ws);
-        if (eventConnections.get(ws.eventId)!.size === 0) {
-          eventConnections.delete(ws.eventId);
+      if (eventId && eventConnections.has(eventId)) {
+        eventConnections.get(eventId)!.delete(socket);
+        if (eventConnections.get(eventId)!.size === 0) {
+          eventConnections.delete(eventId);
         }
       }
     });
 
-    ws.on('error', (error) => {
-      console.error(`❌ WebSocket error for user ${ws.userId}:`, error);
+    socket.on('error', (error) => {
+      console.error(`Socket.IO error for user ${userId}:`, error);
     });
 
     // Send initial ping
-    ws.send(JSON.stringify({ type: 'ping', timestamp: new Date().toISOString() }));
+    socket.emit('ping', { timestamp: new Date().toISOString() });
   });
 
   // Broadcast to event participants
-  function broadcastToEvent(eventId: string, message: any, excludeUserId?: string) {
+  function broadcastToEvent(eventId: string, event: string, data: any, excludeUserId?: string) {
     const eventSockets = eventConnections.get(eventId);
     if (eventSockets) {
       let sentCount = 0;
-      eventSockets.forEach(ws => {
-        if (ws.readyState === WebSocket.OPEN && ws.userId !== excludeUserId) {
-          ws.send(JSON.stringify(message));
+      eventSockets.forEach(socket => {
+        if ((socket as any).userId !== excludeUserId) {
+          socket.emit(event, data);
           sentCount++;
         }
       });
-      console.log(`📡 Broadcast to event ${eventId}: sent to ${sentCount} participants`);
-    }
-  }
-
-  // Handle WebSocket messages
-  async function handleWebSocketMessage(
-    ws: AuthenticatedWebSocket, 
-    message: WSMessage, 
-    connections: Map<string, Set<AuthenticatedWebSocket>>,
-    eventConnections: Map<string, Set<AuthenticatedWebSocket>>
-  ) {
-    const userId = ws.userId!;
-    console.log(`📨 WebSocket message from ${userId}:`, message.type);
-
-    switch (message.type) {
-      case 'location_update':
-        {
-          const { eventId, lat, lng } = message.data;
-          
-          // Get current participant data for movement detection
-          const event = await storage.getEventWithParticipants(eventId, userId);
-          if (!event) {
-            console.log(`❌ Location update failed: Event ${eventId} not found for user ${userId}`);
-            return;
-          }
-
-          const currentParticipant = event.userParticipant;
-          let isMoving = false;
-          let distance = 0;
-          let eta = 0;
-
-          // Calculate distance from event location
-          if (event.locationLat && event.locationLng) {
-            distance = calculateDistance(lat, lng, event.locationLat, event.locationLng);
-            
-            // Calculate ETA using Google Maps API
-            eta = await calculateGoogleETA(lat, lng, event.locationLat, event.locationLng);
-          }
-
-          // Detect movement (100m threshold)
-          if (currentParticipant?.lastLat && currentParticipant?.lastLng) {
-            const movementDistance = calculateDistance(
-              lat, lng, 
-              currentParticipant.lastLat, 
-              currentParticipant.lastLng
-            );
-            
-            const timeDiff = currentParticipant.lastLocationAt 
-              ? (Date.now() - new Date(currentParticipant.lastLocationAt).getTime()) / 1000 
-              : 0;
-            
-            // Consider moving if traveled >100m in last 30 seconds
-            isMoving = movementDistance > 0.1 && timeDiff < 30;
-          }
-
-          // Update participant location
-          const updatedParticipant = await storage.updateParticipantLocation(
-            eventId, userId, lat, lng, isMoving, eta, distance
-          );
-
-          if (updatedParticipant) {
-            // Broadcast location update to all event participants
-            broadcastToEvent(eventId, {
-              type: 'eta_updated',
-              data: {
-                eventId,
-                participantId: userId,
-                eta,
-                distance,
-                isMoving,
-                timestamp: new Date().toISOString()
-              }
-            }, userId);
-          }
-        }
-        break;
-
-      case 'participant_joined':
-        {
-          const { eventId } = message.data;
-          await storage.joinEvent(eventId, userId);
-          
-          const participant = await storage.getUser(userId);
-          if (participant) {
-            broadcastToEvent(eventId, {
-              type: 'participant_joined',
-              data: {
-                eventId,
-                participant: {
-                  id: userId,
-                  user: participant
-                }
-              }
-            }, userId);
-          }
-        }
-        break;
-
-      case 'participant_left':
-        {
-          const { eventId } = message.data;
-          await storage.leaveEvent(eventId, userId);
-          
-          broadcastToEvent(eventId, {
-            type: 'participant_left',
-            data: {
-              eventId,
-              participantId: userId
-            }
-          }, userId);
-        }
-        break;
+      console.log(`Broadcast to event ${eventId}: sent ${event} to ${sentCount} participants`);
     }
   }
 
   const prisma = new PrismaClient()
 
- app.post('/api/auth/signup', async (req, res) => {
+  // Auth routes
+  app.post('/api/auth/signup', async (req, res) => {
     try {
       const { email, username, password } = req.body
 
-      // Check if user already exists by email
       const existingUser = await prisma.user.findUnique({ where: { email } })
       if (existingUser) {
         return res.status(400).json({ error: "User already exists" })
       }
 
-      // Check if username already exists
       const existingUsername = await prisma.user.findUnique({ where: { username } })
       if (existingUsername) {
         return res.status(400).json({ error: "Username already taken" })
       }
 
-      // Hash password
       const hashedPassword = await bcrypt.hash(password, 10)
 
-      // Create new user
       const user = await prisma.user.create({
         data: {
           email,
@@ -375,14 +348,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       })
 
-      // Generate JWT token
       const token = jwt.sign(
         { sub: user.id, email: user.email },
-        process.env.JWT_SECRET,
+        JWT_SECRET!,
         { expiresIn: "7d" }
       )
 
-      console.log('✅ User signup successful:', user.username);
+      console.log('User signup successful:', user.username);
 
       res.json({
         user: {
@@ -393,11 +365,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         token
       })
     } catch (error) {
-      console.error('❌ Signup error:', error)
+      console.error('Signup error:', error)
       res.status(400).json({ error: "Invalid input data" })
     }
   })
-
 
   app.post('/api/auth/login', async (req, res) => {
     try {
@@ -407,7 +378,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Email and password required" });
       }
 
-      // Find user by email
       const user = await prisma.user.findUnique({ 
         where: { email } 
       });
@@ -416,20 +386,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
-      // Verify password
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
-      // Generate JWT token
       const token = jwt.sign(
         { sub: user.id, email: user.email },
-        process.env.JWT_SECRET,
+        JWT_SECRET!,
         { expiresIn: "7d" }
       );
 
-      console.log('✅ User login successful:', user.username);
+      console.log('User login successful:', user.username);
 
       res.json({ 
         user: { 
@@ -440,41 +408,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         token 
       });
     } catch (error) {
-      console.error('❌ Login error:', error);
+      console.error('Login error:', error);
       res.status(500).json({ error: "Login failed" });
     }
   });
 
-
-
+  // Event routes
   app.post('/api/events', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-      console.log('📍 Creating event for user:', req.user!.sub);
-      console.log('📍 Request body:', JSON.stringify(req.body, null, 2));
+      console.log('Creating event for user:', req.user!.sub);
       
-      // Validate and parse the event data
       const eventData = insertEventSchema.parse({
         ...req.body,
-        datetime: new Date(req.body.datetime), // convert string to Date
+        datetime: new Date(req.body.datetime),
         creatorId: req.user!.sub,
       });
 
-      console.log('📍 Parsed event data:', JSON.stringify(eventData, null, 2));
-
-      // Create the event
       const event = await storage.createEvent(eventData);
-      console.log('✅ Event created with ID:', event.id);
+      console.log('Event created with ID:', event.id);
       
-      // Get the event with participants
       const eventWithParticipants = await storage.getEventWithParticipants(event.id, req.user!.sub);
       
       res.json(eventWithParticipants);
     } catch (error) {
-      console.error('❌ Failed to create event:', error);
+      console.error('Failed to create event:', error);
       
-      // Better error handling
       if (error instanceof Error) {
-        // Zod validation errors
         if (error.name === 'ZodError') {
           return res.status(400).json({ 
             error: "Invalid event data", 
@@ -482,7 +441,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
-        // Other errors
         return res.status(400).json({ 
           error: "Failed to create event", 
           details: error.message 
@@ -492,7 +450,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
-  
 
   app.get('/api/events', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
@@ -503,28 +460,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
   app.get('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       const eventId = req.params.id;
       const userId = req.user!.sub;
       
-      console.log('📍 Fetching event:', eventId, 'for user:', userId);
+      console.log('Fetching event:', eventId, 'for user:', userId);
       
-      // First try to get event with participants if user is already involved
       let event = await storage.getEventWithParticipants(eventId, userId);
       
-      // If not found (user not creator/participant), get basic event info
       if (!event) {
         const basicEvent = await storage.getEvent(eventId);
         if (!basicEvent) {
           return res.status(404).json({ error: "Event not found" });
         }
         
-        // Return basic event info - user can join via separate endpoint
         event = {
           ...basicEvent,
-          creator: null, // We'll need to fetch this separately if needed
+          creator: null,
           participants: [],
           isCreator: false
         };
@@ -532,33 +485,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(event);
     } catch (error) {
-      console.error('❌ Failed to get event:', error);
+      console.error('Failed to get event:', error);
       res.status(500).json({ error: "Failed to get event" });
     }
   });
-
 
   app.post('/api/events/:id/join', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       const eventId = req.params.id;
       const userId = req.user!.sub;
       
-      console.log('🤝 User joining event:', { eventId, userId });
+      console.log('User joining event:', { eventId, userId });
       
-      // Check if event exists
       const event = await storage.getEvent(eventId);
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
       }
       
-      // Add user as participant (your joinEvent method handles duplicates)
       const participant = await storage.joinEvent(eventId, userId);
       
-      console.log('✅ User successfully joined event:', participant);
+      console.log('User successfully joined event:', participant);
       res.json({ message: "Successfully joined event", participant });
       
     } catch (error) {
-      console.error('❌ Failed to join event:', error);
+      console.error('Failed to join event:', error);
       res.status(500).json({ error: "Failed to join event" });
     }
   });
@@ -585,107 +535,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const event = await storage.getEvent(req.params.id);
 
-app.delete('/api/events/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
-  try {
-    const event = await storage.getEvent(req.params.id);
-
-    if (!event) {
-      return res.status(404).json({ error: "Event not found" });
-    }
-
-    if (event.creatorId !== req.user!.sub) {
-      return res.status(403).json({ error: "Only the creator can delete this event" });
-    }
-
-    // ✅ Pass both id and userId
-    await storage.deleteEvent(req.params.id, req.user!.sub);
-
-    broadcastToEvent(req.params.id, {
-      type: 'event_deleted',
-      data: {
-        eventId: req.params.id
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
       }
-    });
 
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Delete error:", error); // Add logging
-    res.status(500).json({ error: "Failed to delete event" });
-  }
-});
+      if (event.creatorId !== req.user!.sub) {
+        return res.status(403).json({ error: "Only the creator can delete this event" });
+      }
 
+      await storage.deleteEvent(req.params.id, req.user!.sub);
 
-app.get('/api/directions', authenticateToken, async (req: AuthenticatedRequest, res) => {
-  try {
-    const { origin, destination, mode = 'driving' } = req.query;
-    
-    console.log('🗺️ Directions API request:', {
-      origin,
-      destination, 
-      mode,
-      userId: req.user!.sub,
-      timestamp: new Date().toISOString()
-    });
+      broadcastToEvent(req.params.id, 'event_deleted', {
+        eventId: req.params.id
+      });
 
-    if (!origin || !destination) {
-      return res.status(400).json({ error: 'Origin and destination are required' });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete error:", error);
+      res.status(500).json({ error: "Failed to delete event" });
     }
+  });
 
-    if (!GOOGLE_MAPS_API_KEY) {
-      console.error('❌ Google Maps API key not configured');
-      return res.status(500).json({ error: 'Google Maps API not configured' });
-    }
+  // Other routes
+  app.get('/api/directions', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { origin, destination, mode = 'driving' } = req.query;
+      
+      console.log('Directions API request:', {
+        origin,
+        destination, 
+        mode,
+        userId: req.user!.sub,
+        timestamp: new Date().toISOString()
+      });
 
-    const url = `https://maps.googleapis.com/maps/api/directions/json?` +
-      `origin=${encodeURIComponent(origin as string)}&` +
-      `destination=${encodeURIComponent(destination as string)}&` +
-      `mode=${mode}&` +
-      `key=${GOOGLE_MAPS_API_KEY}`;
+      if (!origin || !destination) {
+        return res.status(400).json({ error: 'Origin and destination are required' });
+      }
 
-    console.log('🌐 Making Google Maps API request...');
+      if (!GOOGLE_MAPS_API_KEY) {
+        console.error('Google Maps API key not configured');
+        return res.status(500).json({ error: 'Google Maps API not configured' });
+      }
 
-    const response = await fetch(url);
-    const data = await response.json();
+      const url = `https://maps.googleapis.com/maps/api/directions/json?` +
+        `origin=${encodeURIComponent(origin as string)}&` +
+        `destination=${encodeURIComponent(destination as string)}&` +
+        `mode=${mode}&` +
+        `key=${GOOGLE_MAPS_API_KEY}`;
 
-    console.log('🌐 Google Maps API response:', {
-      status: data.status,
-      hasRoutes: !!data.routes?.length,
-      hasLegs: !!data.routes?.[0]?.legs?.length
-    });
+      console.log('Making Google Maps API request...');
 
-    if (data.status !== 'OK') {
-      console.error('❌ Google Maps API error:', data.status, data.error_message);
-      return res.status(400).json({ 
-        error: `Google Maps API error: ${data.status}`,
-        details: data.error_message 
+      const response = await fetch(url);
+      const data = await response.json();
+
+      console.log('Google Maps API response:', {
+        status: data.status,
+        hasRoutes: !!data.routes?.length,
+        hasLegs: !!data.routes?.[0]?.legs?.length
+      });
+
+      if (data.status !== 'OK') {
+        console.error('Google Maps API error:', data.status, data.error_message);
+        return res.status(400).json({ 
+          error: `Google Maps API error: ${data.status}`,
+          details: data.error_message 
+        });
+      }
+
+      if (!data.routes?.[0]?.legs?.[0]) {
+        console.error('No route found in Google Maps response');
+        return res.status(404).json({ error: 'No route found' });
+      }
+
+      const route = data.routes[0].legs[0];
+      const result = {
+        duration: route.duration.value,
+        distance: route.distance.value,  
+        durationText: route.duration.text,
+        distanceText: route.distance.text
+      };
+
+      console.log('Directions calculated:', result);
+
+      res.json(result);
+    } catch (error) {
+      console.error('Directions API error:', error);
+      res.status(500).json({ 
+        error: 'Failed to get directions',
+        details: error instanceof Error ? error.message : 'Unknown error'
       });
     }
-
-    if (!data.routes?.[0]?.legs?.[0]) {
-      console.error('❌ No route found in Google Maps response');
-      return res.status(404).json({ error: 'No route found' });
-    }
-
-    const route = data.routes[0].legs[0];
-    const result = {
-      duration: route.duration.value, // seconds
-      distance: route.distance.value, // meters  
-      durationText: route.duration.text,
-      distanceText: route.distance.text
-    };
-
-    console.log('✅ Directions calculated:', result);
-
-    res.json(result);
-  } catch (error) {
-    console.error('❌ Directions API error:', error);
-    res.status(500).json({ 
-      error: 'Failed to get directions',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
+  });
 
   app.get('/api/users/search', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
@@ -704,7 +649,6 @@ app.get('/api/directions', authenticateToken, async (req: AuthenticatedRequest, 
       res.status(500).json({ error: "Search failed" });
     }
   });
-
 
   app.post('/api/invites', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {

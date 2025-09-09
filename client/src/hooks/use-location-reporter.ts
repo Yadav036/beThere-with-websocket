@@ -18,14 +18,26 @@ export function useLocationReporter(options: UseLocationReporterOptions) {
     token,
     enabled = true,
     accuracyThreshold = 50,
-    updateInterval = 10000, // Changed from 1000 to 10000 (10 seconds)
+    updateInterval = 10000, // 10 seconds
   } = options
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const lastPositionRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
   const { toast } = useToast()
 
-  const { sendMessage, isConnected } = useWebSocket({ token, eventId })
+  const { sendMessage, isConnected } = useWebSocket({ 
+    token, 
+    eventId,
+    onMessage: (event, data) => {
+      // Handle Socket.IO events if needed
+      console.log('📡 Received Socket.IO event:', event, data)
+      
+      if (event === 'eta_updated') {
+        // Handle ETA updates from other participants
+        console.log('⏱️ ETA updated for participant:', data)
+      }
+    }
+  })
 
   const getCurrentLocation = useCallback((): Promise<GeolocationPosition> => {
     return new Promise((resolve, reject) => {
@@ -61,27 +73,48 @@ export function useLocationReporter(options: UseLocationReporterOptions) {
         if (distance < 0.005 && timeDiff < 15000) return
       }
 
-      if (
-        sendMessage({
-          type: "location_update",
-          data: {
-            eventId,
-            lat,
-            lng,
-            timestamp: new Date().toISOString(),
-            accuracy,
-          },
-        })
-      ) {
+      // 🔄 CHANGED: Use Socket.IO event format instead of WebSocket message format
+      const success = sendMessage("location_update", {
+        eventId,
+        lat,
+        lng,
+        timestamp: new Date().toISOString(),
+        accuracy,
+      })
+
+      if (success) {
         lastPositionRef.current = { lat, lng, timestamp }
-        console.log("📍 Location update sent successfully")
+        console.log("✅ Location update sent successfully")
       } else {
-        console.error("📍 Failed to send location update - WebSocket not ready")
+        console.error("❌ Failed to send location update - Socket.IO not ready")
       }
     } catch (err) {
-      console.error("📍 Failed to get location:", err)
+      console.error("❌ Failed to get location:", err)
+      
+      // Optional: Show toast error for location issues
+      if (err instanceof GeolocationPositionError) {
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            toast({
+              title: "Location Access Denied",
+              description: "Please enable location access to share your ETA",
+              variant: "destructive"
+            })
+            break
+          case err.POSITION_UNAVAILABLE:
+            toast({
+              title: "Location Unavailable", 
+              description: "Unable to determine your location",
+              variant: "destructive"
+            })
+            break
+          case err.TIMEOUT:
+            console.warn("📍 Location timeout - will retry on next interval")
+            break
+        }
+      }
     }
-  }, [eventId, enabled, isConnected, getCurrentLocation, sendMessage, accuracyThreshold])
+  }, [eventId, enabled, isConnected, getCurrentLocation, sendMessage, accuracyThreshold, toast])
 
   const startReporting = useCallback(() => {
     if (intervalRef.current) {
@@ -113,7 +146,7 @@ export function useLocationReporter(options: UseLocationReporterOptions) {
       console.log("📍 Conditions met for location reporting - starting...")
       const timeout = setTimeout(() => {
         startReporting()
-      }, 1000) // Give WebSocket a moment to fully establish
+      }, 1000) // Give Socket.IO a moment to fully establish
 
       return () => {
         clearTimeout(timeout)

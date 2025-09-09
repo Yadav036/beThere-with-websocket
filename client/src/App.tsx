@@ -10,9 +10,48 @@ import Login from "@/pages/login";
 import Signup from "@/pages/signup";
 import EventPage from "@/pages/event/[id]";
 
+// Protected Route wrapper component
+function ProtectedRoute({ component: Component, ...props }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-2xl font-black text-primary">📸 LOADING...</div>
+      </div>
+    );
+  }
+  
+  if (!isAuthenticated) {
+    return <Redirect to="/login" />;
+  }
+  
+  return <Component {...props} />;
+}
+
+// Public Route wrapper component (redirects to home if authenticated)
+function PublicRoute({ component: Component, ...props }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-2xl font-black text-primary">📸 LOADING...</div>
+      </div>
+    );
+  }
+  
+  if (isAuthenticated) {
+    return <Redirect to="/home" />;
+  }
+  
+  return <Component {...props} />;
+}
+
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
 
+  // Show loading only for the initial auth check
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -22,24 +61,29 @@ function Router() {
   }
 
   return (
-  <Switch>
-      {isAuthenticated ? (
-        <>
-          <Route path="/home" component={Home} />
-          <Route path="/event/:id" component={EventPage} />
-          <Route path="/login" component={() => <Redirect to="/home" />} />
-          <Route path="/signup" component={() => <Redirect to="/home" />} />
-          <Route exact path="/" component={() => <Redirect to="/home" />} />
-        </>
-      ) : (
-        <>
-          <Route path="/login" component={Login} />
-          <Route path="/signup" component={Signup} />
-          <Route path="/home" component={() => <Redirect to="/login" />} />
-          <Route path="/event/:id" component={() => <Redirect to="/login" />} />
-          <Route exact path="/" component={() => <Redirect to="/login" />} />
-        </>
-      )}
+    <Switch>
+      {/* Protected Routes */}
+      <Route path="/home" component={(props) => (
+        <ProtectedRoute component={Home} {...props} />
+      )} />
+      <Route path="/event/:id" component={(props) => (
+        <ProtectedRoute component={EventPage} {...props} />
+      )} />
+      
+      {/* Public Routes */}
+      <Route path="/login" component={(props) => (
+        <PublicRoute component={Login} {...props} />
+      )} />
+      <Route path="/signup" component={(props) => (
+        <PublicRoute component={Signup} {...props} />
+      )} />
+      
+      {/* Root redirect */}
+      <Route exact path="/" component={() => (
+        <Redirect to={isAuthenticated ? "/home" : "/login"} />
+      )} />
+      
+      {/* 404 */}
       <Route component={NotFound} />
     </Switch>
   );

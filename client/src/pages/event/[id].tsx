@@ -12,6 +12,7 @@ import { useLocationReporter } from "@/hooks/use-location-reporter"
 import { useGoogleDirections } from "@/hooks/use-google-directions"
 import { useToast } from "@/hooks/use-toast"
 import type { EventWithParticipants } from "@shared/schema"
+import Avatar, { genConfig } from "react-nice-avatar"
 
 interface ParticipantWithETA {
   id: string
@@ -35,7 +36,16 @@ interface ParticipantWithETA {
   leaveByTime?: Date
   leaveByText?: string
   shouldLeaveNow?: boolean
+  // Avatar config
+  avatarConfig?: any
 }
+
+// Predefined retro avatar configurations
+const RETRO_AVATAR_CONFIGS = [
+  { faceColor: "#F9C9B6", hairStyle: "thick", hairColor: "#000000", eyeStyle: "circle", glassesStyle: "round", mouthStyle: "smile", shirtStyle: "hoody", shirtColor: "#FF5733", bgColor: "#4A90E2" },
+  { faceColor: "#F9C9B6", hairStyle: "mohawk", hairColor: "#FF0000", eyeStyle: "oval", glassesStyle: "square", mouthStyle: "peace", shirtStyle: "short", shirtColor: "#00A86B", bgColor: "#FFD700" },
+  { faceColor: "#F9C9B6", hairStyle: "normal", hairColor: "#8B4513", eyeStyle: "smile", glassesStyle: "none", mouthStyle: "laugh", shirtStyle: "polo", shirtColor: "#6A0DAD", bgColor: "#FF69B4" }
+]
 
 export default function EventPage() {
   const { id } = useParams()
@@ -86,6 +96,18 @@ export default function EventPage() {
       shouldLeaveNow
     }
   }, [])
+
+  // Function to assign retro avatar configs to participants
+  const assignAvatarConfigs = useCallback((participants: ParticipantWithETA[]) => {
+    return participants.map((participant, index) => {
+      // Use a consistent index for each participant to maintain the same avatar
+      const avatarIndex = index % RETRO_AVATAR_CONFIGS.length;
+      return {
+        ...participant,
+        avatarConfig: RETRO_AVATAR_CONFIGS[avatarIndex]
+      };
+    });
+  }, []);
 
   // Join event mutation
   const joinEventMutation = useMutation({
@@ -304,12 +326,14 @@ export default function EventPage() {
         withETA: updatedParticipants.filter((p) => p.googleETA).length,
       })
 
-      setParticipantsWithETA(updatedParticipants)
+      // Assign avatar configs to participants
+      const participantsWithAvatars = assignAvatarConfigs(updatedParticipants)
+      setParticipantsWithETA(participantsWithAvatars)
       // ✅ Added: store the last calculation timestamp
       lastETACalculationRef.current = Date.now()
       setIsCalculatingETAs(false)
     },
-    [event?.participants, event?.location, event?.datetime, getDirections, isCalculatingETAs],
+    [event?.participants, event?.location, event?.datetime, getDirections, isCalculatingETAs, assignAvatarConfigs, calculateLeaveByTime],
   )
 
   // Auto-join logic
@@ -568,7 +592,7 @@ export default function EventPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(participantsWithETA.length > 0 ? participantsWithETA : event?.participants || []).map((participant) => {
+              {(participantsWithETA.length > 0 ? participantsWithETA : event?.participants || []).map((participant, index) => {
                 const isCurrentUser = participant.userId === (user?.sub || user?.id)
                 const status = participant.status || "far"
 
@@ -580,18 +604,11 @@ export default function EventPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <div
-                          className={`participant-dot ${
-                            participant.isMoving
-                              ? "moving"
-                              : status === "close"
-                                ? "stationary"
-                                : status === "arrived"
-                                  ? "arrived"
-                                  : "far"
-                          }`}
-                        ></div>
+                      <div className="flex items-center space-x-3">
+                        {/* Retro Avatar */}
+                        <div className="w-12 h-12 retro-avatar-border">
+                          <Avatar className="w-full h-full" {...participant.avatarConfig} />
+                        </div>
                         <span className="font-bold">
                           {participant.user?.username || participant.user?.email || "Unknown User"}
                           {isCurrentUser && " (You)"}

@@ -97,11 +97,12 @@ function authenticateSocket(token: string): { sub: string; email: string } | nul
   }
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  const httpServer = createServer(app);
+
 
   // Socket.IO server setup
-  const io = new SocketIOServer(httpServer, {
+  let io: SocketIOServer;
+  export async function registerRoutes(app: Express, httpServer: Server) {
+    io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
       origin: process.env.NODE_ENV === 'production' ? false : ["http://localhost:5173", "http://127.0.0.1:5173"],

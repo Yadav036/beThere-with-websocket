@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import http from "http";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic } from "./vite";
 
@@ -21,10 +22,14 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     if (req.path.startsWith("/api")) {
-      let logLine = `${req.method} ${req.path} ${res.statusCode} in ${Date.now() - start}ms`;
+      let logLine = `${req.method} ${req.path} ${res.statusCode} in ${
+        Date.now() - start
+      }ms`;
       if (capturedJson) {
         const jsonStr = JSON.stringify(capturedJson);
-        logLine += ` :: ${jsonStr.length > 100 ? jsonStr.slice(0, 100) + "..." : jsonStr}`;
+        logLine += ` :: ${
+          jsonStr.length > 100 ? jsonStr.slice(0, 100) + "..." : jsonStr
+        }`;
       }
       console.log(logLine);
     }
@@ -36,10 +41,14 @@ app.use((req, res, next) => {
 async function startServer() {
   try {
     const isDevelopment = process.env.NODE_ENV !== "production";
-    const host = isDevelopment ? "localhost" : "0.0.0.0";
+    const host = "0.0.0.0"; // ✅ always 0.0.0.0 for Docker
     const port = parseInt(process.env.PORT || "3000", 10);
 
-    const server = await registerRoutes(app);
+  // ✅ Create HTTP server
+  const server = http.createServer(app);
+
+  // Register routes and attach Socket.IO to the same server
+  await registerRoutes(app, server);
 
     // Global error handler
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -51,10 +60,11 @@ async function startServer() {
 
     // Dev: Vite middleware, Prod: static files
     if (isDevelopment) {
-      await setupVite(app, server);
+      await setupVite(app);
     } else {
       serveStatic(app);
     }
+
 
     // Start server
     server.listen(port, host, () => {
@@ -62,7 +72,7 @@ async function startServer() {
         console.log(`Server running at http://localhost:${port}`);
       } else {
         console.log(`Server running on port ${port}`);
-        console.log("Use your EC2 public IP or domain to connect");
+        console.log("Use your EC2/Docker host IP or domain to connect");
       }
     });
 
